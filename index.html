@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f172a">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="습관">
+<title>습관 트래커</title>
+<style>
+  :root { --bg:#0f172a; --card:#1e293b; --text:#e2e8f0; --muted:#94a3b8; --accent:#22c55e; --line:#334155; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,'Malgun Gothic',sans-serif; background:var(--bg); color:var(--text); }
+  main { max-width:760px; margin:0 auto; padding:24px 16px 60px; }
+  h1 { margin:0 0 4px; }
+  .sub { color:var(--muted); margin-bottom:20px; }
+  .summary { display:flex; gap:12px; margin-bottom:20px; }
+  .stat { flex:1; background:var(--card); border-radius:12px; padding:14px; text-align:center; }
+  .stat b { display:block; font-size:24px; color:var(--accent); }
+  .stat span { font-size:12px; color:var(--muted); }
+  form { display:flex; gap:8px; margin-bottom:20px; }
+  input[type=text] { flex:1; padding:12px; border-radius:10px; border:1px solid var(--line); background:var(--card); color:var(--text); font-size:15px; }
+  button { cursor:pointer; border:0; border-radius:10px; padding:12px 18px; background:var(--accent); color:#052e16; font-weight:700; }
+  .habit { background:var(--card); border-radius:12px; padding:14px; margin-bottom:12px; }
+  .head { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+  .name { font-weight:600; font-size:16px; }
+  .meta { font-size:12px; color:var(--muted); }
+  .del { background:none; color:var(--muted); padding:4px 8px; font-weight:400; }
+  .del:hover { color:#f87171; }
+  .days { display:grid; grid-template-columns:repeat(7,1fr); gap:6px; }
+  .day { text-align:center; font-size:11px; color:var(--muted); }
+  .cell { margin-top:4px; height:38px; border-radius:8px; border:1px solid var(--line); background:transparent; color:var(--text); padding:0; }
+  .cell.done { background:var(--accent); border-color:var(--accent); color:#052e16; }
+  .cell.today { outline:2px solid #38bdf8; }
+  .bar { height:6px; background:var(--line); border-radius:3px; margin-top:12px; overflow:hidden; }
+  .bar i { display:block; height:100%; background:var(--accent); }
+  .empty { text-align:center; color:var(--muted); padding:40px 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>🌱 습관 트래커</h1>
+  <div class="sub" id="today"></div>
+  <div class="summary">
+    <div class="stat"><b id="sDone">0/0</b><span>오늘 완료</span></div>
+    <div class="stat"><b id="sBest">0</b><span>최장 현재 연속</span></div>
+    <div class="stat"><b id="sRate">0%</b><span>최근 7일 달성률</span></div>
+  </div>
+  <form id="form">
+    <input type="text" id="name" placeholder="새 습관 (예: 물 2L 마시기)" maxlength="40" required>
+    <button>추가</button>
+  </form>
+  <div id="list"></div>
+</main>
+<script>
+const KEY = 'habit-tracker-v1';
+let habits = JSON.parse(localStorage.getItem(KEY) || '[]');
+const save = () => localStorage.setItem(KEY, JSON.stringify(habits));
+const fmt = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+const DAYS = ['일','월','화','수','목','금','토'];
+
+function lastDays(n) {
+  return Array.from({length:n}, (_, i) => { const d = new Date(); d.setDate(d.getDate() - (n-1-i)); return d; });
+}
+function streak(h) {
+  const d = new Date();
+  if (!h.log[fmt(d)]) d.setDate(d.getDate() - 1); // 오늘 미완료여도 어제까지 연속이면 유지
+  let c = 0;
+  while (h.log[fmt(d)]) { c++; d.setDate(d.getDate() - 1); }
+  return c;
+}
+function toggle(id, date) {
+  const h = habits.find(h => h.id === id);
+  h.log[date] ? delete h.log[date] : h.log[date] = true;
+  save(); render();
+}
+function remove(id) {
+  if (!confirm('이 습관을 삭제할까요?')) return;
+  habits = habits.filter(h => h.id !== id); save(); render();
+}
+function render() {
+  const week = lastDays(7), today = fmt(new Date());
+  document.getElementById('today').textContent =
+    new Date().toLocaleDateString('ko-KR', {year:'numeric', month:'long', day:'numeric', weekday:'long'});
+
+  const doneToday = habits.filter(h => h.log[today]).length;
+  const total7 = habits.length * 7;
+  const done7 = habits.reduce((s, h) => s + week.filter(d => h.log[fmt(d)]).length, 0);
+  sDone.textContent = `${doneToday}/${habits.length}`;
+  sBest.textContent = Math.max(0, ...habits.map(streak));
+  sRate.textContent = (total7 ? Math.round(done7 / total7 * 100) : 0) + '%';
+
+  const list = document.getElementById('list');
+  if (!habits.length) { list.innerHTML = '<div class="empty">아직 습관이 없어요. 위에서 추가해 보세요!</div>'; return; }
+  list.innerHTML = habits.map(h => {
+    const cnt = week.filter(d => h.log[fmt(d)]).length;
+    return `<div class="habit">
+      <div class="head">
+        <div><div class="name">${h.name.replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))}</div>
+        <div class="meta">🔥 ${streak(h)}일 연속 · 총 ${Object.keys(h.log).length}회</div></div>
+        <button class="del" onclick="remove(${h.id})">삭제</button>
+      </div>
+      <div class="days">${week.map(d => {
+        const k = fmt(d);
+        return `<div class="day">${DAYS[d.getDay()]}
+          <button class="cell ${h.log[k] ? 'done' : ''} ${k === today ? 'today' : ''}" onclick="toggle(${h.id},'${k}')">${h.log[k] ? '✓' : ''}</button></div>`;
+      }).join('')}</div>
+      <div class="bar"><i style="width:${cnt/7*100}%"></i></div>
+    </div>`;
+  }).join('');
+}
+form.addEventListener('submit', e => {
+  e.preventDefault();
+  const n = name.value.trim(); if (!n) return;
+  habits.push({id: Date.now(), name: n, log: {}});
+  name.value = ''; save(); render();
+});
+render();
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(console.error));
+}
+</script>
+</body>
+</html>
