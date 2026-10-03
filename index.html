@@ -47,6 +47,8 @@
   .bar { height:6px; background:var(--line); border-radius:3px; margin-top:12px; overflow:hidden; }
   .bar i { display:block; height:100%; background:var(--accent); }
   .empty { text-align:center; color:var(--muted); padding:40px 0; }
+  .acts { display:flex; gap:2px; }
+  .del.edit:hover { color:#38bdf8; }
   dialog { background:var(--card); color:var(--text); border:1px solid var(--line); border-radius:14px; width:min(420px,92vw); }
   dialog::backdrop { background:rgba(0,0,0,.6); }
   dialog label { display:block; font-size:13px; color:var(--muted); margin:12px 0 4px; }
@@ -146,6 +148,15 @@ function remove(id) {
   state.habits[id] = { ...state.habits[id], deleted: true, t: Date.now() };
   save(); render(); scheduleSync();
 }
+function editHabit(id) {
+  const cur = state.habits[id].name;
+  const next = prompt('습관 이름을 수정하세요', cur);
+  if (next === null) return;
+  const name = next.trim().slice(0, 40);
+  if (!name || name === cur) return;
+  state.habits[id] = { ...state.habits[id], name, t: Date.now() }; // 기록(체크)은 id로 연결되어 그대로 유지됨
+  save(); render(); scheduleSync();
+}
 
 function render() {
   const habits = habitList(), week = lastDays(7), today = fmt(new Date());
@@ -163,7 +174,7 @@ function render() {
       <div class="head">
         <div><div class="name">${esc(h.name)}</div>
         <div class="meta">🔥 ${streak(h.id)}일 연속 · 총 ${totalDone(h.id)}회</div></div>
-        <button class="del" onclick="remove('${h.id}')">삭제</button>
+        <div class="acts"><button class="del edit" onclick="editHabit('${h.id}')">편집</button><button class="del" onclick="remove('${h.id}')">삭제</button></div>
       </div>
       <div class="days">${week.map(d => {
         const k = fmt(d), on = isDone(h.id, k);
