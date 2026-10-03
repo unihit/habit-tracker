@@ -35,6 +35,15 @@
   button.sec { background:var(--line); color:var(--text); }
   .habit { background:var(--card); border-radius:12px; padding:14px; margin-bottom:12px; }
   .head { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+  .lhs { display:flex; align-items:center; gap:10px; min-width:0; }
+  .handle { font-size:20px; line-height:1; color:var(--muted); cursor:grab; padding:8px 6px; margin:-8px 0 -8px -8px; touch-action:none; user-select:none; -webkit-user-select:none; border-radius:8px; }
+  .handle:hover { color:var(--text); background:var(--line); }
+  .habit { position:relative; will-change:transform; }
+  .habit.shifting { transition:transform .22s cubic-bezier(.2,.8,.2,1); }
+  .habit.dragging { z-index:10; cursor:grabbing; box-shadow:0 12px 28px rgba(0,0,0,.5); outline:2px solid var(--accent); transition:box-shadow .15s, outline-color .15s; }
+  .habit.settling { z-index:10; transition:transform .2s cubic-bezier(.2,.8,.2,1), box-shadow .2s; }
+  body.is-dragging { user-select:none; -webkit-user-select:none; cursor:grabbing; }
+  body.is-dragging .habit button { pointer-events:none; }
   .name { font-weight:600; font-size:16px; }
   .meta { font-size:12px; color:var(--muted); }
   .del { background:none; color:var(--muted); padding:4px 8px; font-weight:400; }
@@ -159,6 +168,7 @@ function editHabit(id) {
 }
 
 function render() {
+  if (drag) return; // 드래그 중에는 동기화 등으로 DOM을 갈아끼우지 않음
   const habits = habitList(), week = lastDays(7), today = fmt(new Date());
   $('today').textContent = new Date().toLocaleDateString('ko-KR', {year:'numeric', month:'long', day:'numeric', weekday:'long'});
   const doneToday = habits.filter(h => isDone(h.id, today)).length;
@@ -170,10 +180,11 @@ function render() {
   if (!habits.length) { $('list').innerHTML = '<div class="empty">아직 습관이 없어요. 위에서 추가해 보세요!</div>'; return; }
   $('list').innerHTML = habits.map(h => {
     const cnt = week.filter(d => isDone(h.id, fmt(d))).length;
-    return `<div class="habit">
+    return `<div class="habit" data-id="${h.id}">
       <div class="head">
+        <div class="lhs"><div class="handle" title="드래그해서 순서 변경" aria-label="순서 변경">⠿</div>
         <div><div class="name">${esc(h.name)}</div>
-        <div class="meta">🔥 ${streak(h.id)}일 연속 · 총 ${totalDone(h.id)}회</div></div>
+        <div class="meta">🔥 ${streak(h.id)}일 연속 · 총 ${totalDone(h.id)}회</div></div></div>
         <div class="acts"><button class="del edit" onclick="editHabit('${h.id}')">편집</button><button class="del" onclick="remove('${h.id}')">삭제</button></div>
       </div>
       <div class="days">${week.map(d => {
@@ -184,6 +195,101 @@ function render() {
       <div class="bar"><i style="width:${cnt/7*100}%"></i></div>
     </div>`;
   }).join('');
+}
+
+/* ---------------- 드래그로 순서 변경 ---------------- */
+const GAP = 12; // .habit margin-bottom 과 동일
+let drag = null;
+
+$('list').addEventListener('pointerdown', e => {
+  const handle = e.target.closest('.handle');
+  if (!handle || drag) return;
+  e.preventDefault();
+  const cards = [...$('list').querySelectorAll('.habit')];
+  const el = handle.closest('.habit');
+  const from = cards.indexOf(el);
+  const rects = cards.map(c => c.getBoundingClientRect());
+  drag = {
+    id: el.dataset.id, el, cards, from, target: from, pid: e.pointerId, handle,
+    startY: e.clientY, startScroll: window.scrollY, lastY: e.clientY,
+    h: rects[from].height,
+    centers: rects.map(r => r.top + r.height / 2 + window.scrollY), // 문서 기준 중심 좌표
+    heights: rects.map(r => r.height), raf: 0
+  };
+  handle.setPointerCapture(e.pointerId);
+  el.classList.add('dragging');
+  cards.forEach(c => { if (c !== el) c.classList.add('shifting'); });
+  document.body.classList.add('is-dragging');
+  drag.raf = requestAnimationFrame(dragTick);
+});
+
+function dragOffset() { return (drag.lastY - drag.startY) + (window.scrollY - drag.startScroll); }
+
+function dragTick() {
+  if (!drag) return;
+  // 화면 가장자리에서 자동 스크롤
+  const edge = 70, y = drag.lastY, vh = window.innerHeight;
+  if (y < edge) window.scrollBy(0, -Math.ceil((edge - y) / 5));
+  else if (y > vh - edge) window.scrollBy(0, Math.ceil((y - (vh - edge)) / 5));
+
+  const dy = dragOffset();
+  drag.el.style.transform = `translateY(${dy}px) scale(1.02)`;
+
+  // 드래그 중인 카드의 중심이 넘어선 카드 수 = 목표 위치
+  const center = drag.centers[drag.from] + dy;
+  let target = 0;
+  drag.cards.forEach((c, i) => { if (i !== drag.from && drag.centers[i] < center) target++; });
+  drag.target = target;
+
+  drag.cards.forEach((c, i) => {
+    if (i === drag.from) return;
+    let shift = 0;
+    if (drag.from < target && i > drag.from && i <= target) shift = -(drag.h + GAP);
+    else if (drag.from > target && i >= target && i < drag.from) shift = drag.h + GAP;
+    c.style.transform = shift ? `translateY(${shift}px)` : '';
+  });
+  drag.raf = requestAnimationFrame(dragTick);
+}
+
+window.addEventListener('pointermove', e => { if (drag && e.pointerId === drag.pid) drag.lastY = e.clientY; });
+
+function endDrag(commit) {
+  if (!drag) return;
+  const d = drag; drag = null;
+  cancelAnimationFrame(d.raf);
+  try { d.handle.releasePointerCapture(d.pid); } catch (_) {}
+
+  // 드래그한 카드가 들어갈 자리로 부드럽게 안착
+  let settle = 0;
+  if (commit) {
+    if (d.from < d.target) for (let i = d.from + 1; i <= d.target; i++) settle += d.heights[i] + GAP;
+    else if (d.from > d.target) for (let i = d.target; i < d.from; i++) settle -= d.heights[i] + GAP;
+  }
+  d.el.classList.remove('dragging');
+  d.el.classList.add('settling');
+  d.el.style.transform = `translateY(${settle}px)`;
+
+  setTimeout(() => {
+    document.body.classList.remove('is-dragging');
+    d.cards.forEach(c => c.classList.remove('shifting', 'settling'));
+    if (commit && d.from !== d.target) reorder(d.id, d.target);
+    else render();
+  }, 220);
+}
+window.addEventListener('pointerup', e => { if (drag && e.pointerId === drag.pid) endDrag(true); });
+window.addEventListener('pointercancel', e => { if (drag && e.pointerId === drag.pid) endDrag(false); });
+
+// 이동한 습관 하나의 order 값만 이웃 사이로 갱신 (다른 기기와 병합될 때 충돌 최소화)
+function reorder(id, toIndex) {
+  const list = habitList().filter(h => h.id !== id);
+  const prev = list[toIndex - 1], next = list[toIndex];
+  let o;
+  if (prev && next) o = (prev.o + next.o) / 2;
+  else if (prev) o = prev.o + 1000;
+  else if (next) o = next.o - 1000;
+  else return render();
+  state.habits[id] = { ...state.habits[id], o, t: Date.now() };
+  save(); render(); scheduleSync();
 }
 
 /* ---------------- 동기화 ---------------- */
