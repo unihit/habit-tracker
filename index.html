@@ -17,15 +17,22 @@
   * { box-sizing:border-box; }
   body { margin:0; font-family:system-ui,'Malgun Gothic',sans-serif; background:var(--bg); color:var(--text); }
   main { max-width:760px; margin:0 auto; padding:24px 16px 60px; }
+  .top { display:flex; justify-content:space-between; align-items:flex-start; }
   h1 { margin:0 0 4px; }
   .sub { color:var(--muted); margin-bottom:20px; }
+  .sync { text-align:right; font-size:12px; color:var(--muted); }
+  .sync.err { color:#f87171; }
+  .sync.ok { color:var(--accent); }
+  .gear { background:var(--card); color:var(--text); padding:6px 10px; margin-top:4px; font-weight:400; }
   .summary { display:flex; gap:12px; margin-bottom:20px; }
   .stat { flex:1; background:var(--card); border-radius:12px; padding:14px; text-align:center; }
   .stat b { display:block; font-size:24px; color:var(--accent); }
   .stat span { font-size:12px; color:var(--muted); }
-  form { display:flex; gap:8px; margin-bottom:20px; }
-  input[type=text] { flex:1; padding:12px; border-radius:10px; border:1px solid var(--line); background:var(--card); color:var(--text); font-size:15px; }
+  form.add { display:flex; gap:8px; margin-bottom:20px; }
+  input[type=text], input[type=password], input[type=url] { width:100%; padding:12px; border-radius:10px; border:1px solid var(--line); background:var(--card); color:var(--text); font-size:15px; }
+  form.add input { flex:1; width:auto; }
   button { cursor:pointer; border:0; border-radius:10px; padding:12px 18px; background:var(--accent); color:#052e16; font-weight:700; }
+  button.sec { background:var(--line); color:var(--text); }
   .habit { background:var(--card); border-radius:12px; padding:14px; margin-bottom:12px; }
   .head { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
   .name { font-weight:600; font-size:16px; }
@@ -34,93 +41,204 @@
   .del:hover { color:#f87171; }
   .days { display:grid; grid-template-columns:repeat(7,1fr); gap:6px; }
   .day { text-align:center; font-size:11px; color:var(--muted); }
-  .cell { margin-top:4px; height:38px; border-radius:8px; border:1px solid var(--line); background:transparent; color:var(--text); padding:0; }
+  .cell { width:100%; margin-top:4px; height:38px; border-radius:8px; border:1px solid var(--line); background:transparent; color:var(--text); padding:0; }
   .cell.done { background:var(--accent); border-color:var(--accent); color:#052e16; }
   .cell.today { outline:2px solid #38bdf8; }
   .bar { height:6px; background:var(--line); border-radius:3px; margin-top:12px; overflow:hidden; }
   .bar i { display:block; height:100%; background:var(--accent); }
   .empty { text-align:center; color:var(--muted); padding:40px 0; }
+  dialog { background:var(--card); color:var(--text); border:1px solid var(--line); border-radius:14px; width:min(420px,92vw); }
+  dialog::backdrop { background:rgba(0,0,0,.6); }
+  dialog label { display:block; font-size:13px; color:var(--muted); margin:12px 0 4px; }
+  dialog .row { display:flex; gap:8px; margin-top:16px; justify-content:flex-end; }
+  dialog p { font-size:12px; color:var(--muted); }
 </style>
 </head>
 <body>
 <main>
-  <h1>🌱 습관 트래커</h1>
-  <div class="sub" id="today"></div>
+  <div class="top">
+    <div>
+      <h1>🌱 습관 트래커</h1>
+      <div class="sub" id="today"></div>
+    </div>
+    <div>
+      <div class="sync" id="syncStatus"></div>
+      <div style="text-align:right"><button class="gear" id="gearBtn" type="button">⚙ 동기화 설정</button></div>
+    </div>
+  </div>
   <div class="summary">
     <div class="stat"><b id="sDone">0/0</b><span>오늘 완료</span></div>
     <div class="stat"><b id="sBest">0</b><span>최장 현재 연속</span></div>
     <div class="stat"><b id="sRate">0%</b><span>최근 7일 달성률</span></div>
   </div>
-  <form id="form">
+  <form class="add" id="form">
     <input type="text" id="name" placeholder="새 습관 (예: 물 2L 마시기)" maxlength="40" required>
     <button>추가</button>
   </form>
   <div id="list"></div>
 </main>
+
+<dialog id="dlg">
+  <form method="dialog" id="cfgForm">
+    <h3 style="margin-top:0">동기화 설정</h3>
+    <p>Apps Script 웹 앱 URL과 토큰을 입력하면 기기 간 동기화가 켜집니다. 비워 두면 이 기기에만 저장됩니다.</p>
+    <label for="cfgUrl">웹 앱 URL</label>
+    <input type="url" id="cfgUrl" placeholder="https://script.google.com/macros/s/.../exec">
+    <label for="cfgToken">토큰</label>
+    <input type="password" id="cfgToken" autocomplete="off">
+    <div class="row">
+      <button type="button" class="sec" id="cfgCancel">닫기</button>
+      <button type="submit" id="cfgSave">저장 후 동기화</button>
+    </div>
+  </form>
+</dialog>
+
 <script>
-const KEY = 'habit-tracker-v1';
-let habits = JSON.parse(localStorage.getItem(KEY) || '[]');
-const save = () => localStorage.setItem(KEY, JSON.stringify(habits));
-const fmt = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+const KEY = 'habit-tracker-v2';
+const OLD_KEY = 'habit-tracker-v1';
+const CFG_KEY = 'habit-tracker-sync';
 const DAYS = ['일','월','화','수','목','금','토'];
+const $ = id => document.getElementById(id);
+const fmt = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+const esc = s => s.replace(/[<>&"]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
+const newId = () => 'h' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+
+// 상태: habits {id:{id,name,deleted,o,t}}, logs {"id|date":{done,t}}  (t = 마지막 수정 시각, 최신 수정이 이김)
+let state = load();
+let cfg = JSON.parse(localStorage.getItem(CFG_KEY) || '{}');
+
+function load() {
+  const raw = localStorage.getItem(KEY);
+  if (raw) return JSON.parse(raw);
+  const s = { habits: {}, logs: {} };
+  const old = JSON.parse(localStorage.getItem(OLD_KEY) || '[]'); // v1 데이터 이전
+  const now = Date.now();
+  old.forEach((h, i) => {
+    const id = 'h' + String(h.id);
+    s.habits[id] = { id, name: h.name, deleted: false, o: now + i, t: now };
+    Object.keys(h.log).forEach(d => { s.logs[id + '|' + d] = { done: true, t: now }; });
+  });
+  return s;
+}
+function save() { localStorage.setItem(KEY, JSON.stringify(state)); }
+
+const habitList = () => Object.values(state.habits).filter(h => !h.deleted).sort((a, b) => a.o - b.o);
+const isDone = (id, date) => !!(state.logs[id + '|' + date] && state.logs[id + '|' + date].done);
+const totalDone = id => Object.keys(state.logs).filter(k => k.startsWith(id + '|') && state.logs[k].done).length;
 
 function lastDays(n) {
   return Array.from({length:n}, (_, i) => { const d = new Date(); d.setDate(d.getDate() - (n-1-i)); return d; });
 }
-function streak(h) {
+function streak(id) {
   const d = new Date();
-  if (!h.log[fmt(d)]) d.setDate(d.getDate() - 1); // 오늘 미완료여도 어제까지 연속이면 유지
+  if (!isDone(id, fmt(d))) d.setDate(d.getDate() - 1);
   let c = 0;
-  while (h.log[fmt(d)]) { c++; d.setDate(d.getDate() - 1); }
+  while (isDone(id, fmt(d))) { c++; d.setDate(d.getDate() - 1); }
   return c;
 }
+
 function toggle(id, date) {
-  const h = habits.find(h => h.id === id);
-  h.log[date] ? delete h.log[date] : h.log[date] = true;
-  save(); render();
+  state.logs[id + '|' + date] = { done: !isDone(id, date), t: Date.now() };
+  save(); render(); scheduleSync();
 }
 function remove(id) {
   if (!confirm('이 습관을 삭제할까요?')) return;
-  habits = habits.filter(h => h.id !== id); save(); render();
+  state.habits[id] = { ...state.habits[id], deleted: true, t: Date.now() };
+  save(); render(); scheduleSync();
 }
+
 function render() {
-  const week = lastDays(7), today = fmt(new Date());
-  document.getElementById('today').textContent =
-    new Date().toLocaleDateString('ko-KR', {year:'numeric', month:'long', day:'numeric', weekday:'long'});
+  const habits = habitList(), week = lastDays(7), today = fmt(new Date());
+  $('today').textContent = new Date().toLocaleDateString('ko-KR', {year:'numeric', month:'long', day:'numeric', weekday:'long'});
+  const doneToday = habits.filter(h => isDone(h.id, today)).length;
+  const done7 = habits.reduce((s, h) => s + week.filter(d => isDone(h.id, fmt(d))).length, 0);
+  $('sDone').textContent = `${doneToday}/${habits.length}`;
+  $('sBest').textContent = Math.max(0, ...habits.map(h => streak(h.id)));
+  $('sRate').textContent = (habits.length ? Math.round(done7 / (habits.length * 7) * 100) : 0) + '%';
 
-  const doneToday = habits.filter(h => h.log[today]).length;
-  const total7 = habits.length * 7;
-  const done7 = habits.reduce((s, h) => s + week.filter(d => h.log[fmt(d)]).length, 0);
-  sDone.textContent = `${doneToday}/${habits.length}`;
-  sBest.textContent = Math.max(0, ...habits.map(streak));
-  sRate.textContent = (total7 ? Math.round(done7 / total7 * 100) : 0) + '%';
-
-  const list = document.getElementById('list');
-  if (!habits.length) { list.innerHTML = '<div class="empty">아직 습관이 없어요. 위에서 추가해 보세요!</div>'; return; }
-  list.innerHTML = habits.map(h => {
-    const cnt = week.filter(d => h.log[fmt(d)]).length;
+  if (!habits.length) { $('list').innerHTML = '<div class="empty">아직 습관이 없어요. 위에서 추가해 보세요!</div>'; return; }
+  $('list').innerHTML = habits.map(h => {
+    const cnt = week.filter(d => isDone(h.id, fmt(d))).length;
     return `<div class="habit">
       <div class="head">
-        <div><div class="name">${h.name.replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))}</div>
-        <div class="meta">🔥 ${streak(h)}일 연속 · 총 ${Object.keys(h.log).length}회</div></div>
-        <button class="del" onclick="remove(${h.id})">삭제</button>
+        <div><div class="name">${esc(h.name)}</div>
+        <div class="meta">🔥 ${streak(h.id)}일 연속 · 총 ${totalDone(h.id)}회</div></div>
+        <button class="del" onclick="remove('${h.id}')">삭제</button>
       </div>
       <div class="days">${week.map(d => {
-        const k = fmt(d);
+        const k = fmt(d), on = isDone(h.id, k);
         return `<div class="day">${DAYS[d.getDay()]}
-          <button class="cell ${h.log[k] ? 'done' : ''} ${k === today ? 'today' : ''}" onclick="toggle(${h.id},'${k}')">${h.log[k] ? '✓' : ''}</button></div>`;
+          <button class="cell ${on ? 'done' : ''} ${k === today ? 'today' : ''}" onclick="toggle('${h.id}','${k}')">${on ? '✓' : ''}</button></div>`;
       }).join('')}</div>
       <div class="bar"><i style="width:${cnt/7*100}%"></i></div>
     </div>`;
   }).join('');
 }
-form.addEventListener('submit', e => {
-  e.preventDefault();
-  const n = name.value.trim(); if (!n) return;
-  habits.push({id: Date.now(), name: n, log: {}});
-  name.value = ''; save(); render();
+
+/* ---------------- 동기화 ---------------- */
+let syncing = false, pending = false, timer = null;
+
+function setStatus(text, cls) { const el = $('syncStatus'); el.textContent = text; el.className = 'sync ' + (cls || ''); }
+const hhmm = () => new Date().toLocaleTimeString('ko-KR', {hour:'2-digit', minute:'2-digit'});
+
+function scheduleSync() {
+  if (!cfg.url || !cfg.token) return;
+  clearTimeout(timer);
+  timer = setTimeout(sync, 800); // 연속 클릭을 묶어서 한 번에 전송
+}
+
+async function sync() {
+  if (!cfg.url || !cfg.token) { setStatus('로컬 저장 중 (동기화 꺼짐)'); return; }
+  if (!navigator.onLine) { setStatus('오프라인 · 연결되면 동기화', 'err'); return; }
+  if (syncing) { pending = true; return; }
+  syncing = true; setStatus('동기화 중…');
+  try {
+    const res = await fetch(cfg.url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // CORS preflight 회피
+      body: JSON.stringify({
+        token: cfg.token,
+        habits: Object.values(state.habits),
+        logs: Object.entries(state.logs).map(([k, v]) => ({ k, done: v.done, t: v.t }))
+      })
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error === 'unauthorized' ? '토큰이 올바르지 않습니다' : data.error);
+    data.habits.forEach(h => { const c = state.habits[h.id]; if (!c || h.t > c.t) state.habits[h.id] = h; });
+    data.logs.forEach(l => { const c = state.logs[l.k]; if (!c || l.t > c.t) state.logs[l.k] = { done: l.done, t: l.t }; });
+    save(); render();
+    setStatus('☁ 동기화됨 ' + hhmm(), 'ok');
+  } catch (e) {
+    setStatus('동기화 실패: ' + e.message, 'err');
+  } finally {
+    syncing = false;
+    if (pending) { pending = false; scheduleSync(); }
+  }
+}
+
+/* ---------------- 설정 UI ---------------- */
+$('gearBtn').onclick = () => { $('cfgUrl').value = cfg.url || ''; $('cfgToken').value = cfg.token || ''; $('dlg').showModal(); };
+$('cfgCancel').onclick = () => $('dlg').close();
+$('cfgForm').addEventListener('submit', () => {
+  cfg = { url: $('cfgUrl').value.trim(), token: $('cfgToken').value.trim() };
+  localStorage.setItem(CFG_KEY, JSON.stringify(cfg));
+  sync();
 });
+
+$('form').addEventListener('submit', e => {
+  e.preventDefault();
+  const n = $('name').value.trim(); if (!n) return;
+  const id = newId(), now = Date.now();
+  state.habits[id] = { id, name: n, deleted: false, o: now, t: now };
+  $('name').value = ''; save(); render(); scheduleSync();
+});
+
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') sync(); });
+window.addEventListener('online', sync);
+setInterval(() => { if (document.visibilityState === 'visible') sync(); }, 60000);
+
 render();
+if (cfg.url) sync(); else setStatus('로컬 저장 중 (동기화 꺼짐)');
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(console.error));
